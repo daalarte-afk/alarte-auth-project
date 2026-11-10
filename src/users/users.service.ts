@@ -1,88 +1,97 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { RowDataPacket, OkPacket } from 'mysql2';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class UsersService {
-    constructor(private db: DatabaseService) { }
+    constructor(private readonly db: DatabaseService) {}
 
-    private get pool() { return this.db.getPool(); }
-
-    async createUser(username: string, password: string, role = 'user') {
-        const hashed = await bcrypt.hash(password, 10);
-        const [result] = await this.pool.execute<OkPacket>(
+    async createUser(username: string, password: string, role?: string) {
+        const pool = this.db.getPool();
+        const hashed_password = await bcrypt.hash(password, 10);
+        const [result] = await pool.execute(
             'INSERT INTO users (username, hashed_password, role) VALUES (?, ?, ?)',
-            [username, hashed, role]
-        );
-        return { id: result.insertId, username, role };
-    }
-
-    async findByUsername(username: string) {
-        const [rows] = await this.pool.execute<RowDataPacket[]>(
-            'SELECT id, username, hashed_password, role, refresh_token FROM users WHERE username = ?',
-            [username]
-        );
-        return rows[0];
-    }
-
-    async findById(id: number) {
-        const [rows] = await this.pool.execute<RowDataPacket[]>(
-            'SELECT id, username, role, created_at FROM users WHERE id = ?',
-            [id]
-        );
-        return rows[0];
+            [username, hashed_password, role || 'user'],
+        ) as any;
+        return { id: result.insertId, username, role: role || 'user' };
     }
 
     async getAll() {
-        const [rows] = await this.pool.execute<RowDataPacket[]>(
-            'SELECT id, username, role, created_at FROM users'
-        );
+        const pool = this.db.getPool();
+        const [rows] = await pool.execute('SELECT id, username, role FROM users');
         return rows;
     }
 
-    async updateUser(id: number, partial: { username?: string; password?: string; role?: string }) {
+    async findById(id: number) {
+        const pool = this.db.getPool();
+        const [rows] = await pool.execute(
+            'SELECT id, username, role, hashed_password FROM users WHERE id = ?',
+            [id],
+        ) as any;
+        return (rows as any[])[0] || null;
+    }
+
+    async findByUsername(username: string) {
+        const pool = this.db.getPool();
+        const [rows] = await pool.execute(
+            'SELECT id, username, hashed_password, role FROM users WHERE username = ?',
+            [username],
+        ) as any;
+        return (rows as any[])[0] || null;
+    }
+
+    async updateUser(id: number, body: { username?: string; password?: string; role?: string }) {
+        const pool = this.db.getPool();
         const fields: string[] = [];
         const values: any[] = [];
 
-        if (partial.username) {
+        if (body.username) {
             fields.push('username = ?');
-            values.push(partial.username);
+            values.push(body.username);
         }
-
-        if (partial.password) {
-            const hashed = await bcrypt.hash(partial.password, 10);
+        if (body.password) {
             fields.push('hashed_password = ?');
-            values.push(hashed);
+            values.push(await bcrypt.hash(body.password, 10));
         }
-
-        if (partial.role) {
+        if (body.role) {
             fields.push('role = ?');
-            values.push(partial.role);
+            values.push(body.role);
         }
 
-        if (fields.length === 0) return await this.findById(id);
+        if (fields.length === 0) return { updated: false };
 
         values.push(id);
-        const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-        await this.pool.execute(sql, values);
-        return this.findById(id);
+        const [result] = await pool.execute(
+            `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+            values,
+        ) as any;
+        return { updated: (result as any).affectedRows > 0 };
     }
 
-    async deleteUser(id: number) {
-        const [res] = await this.pool.execute<OkPacket>('DELETE FROM users WHERE id = ?', [id]);
-        return { affectedRows: res.affectedRows };
+    async deleteUser(id: number): Promise<{ affectedRows: number }> {
+        const pool = this.db.getPool();
+        const [result] = await pool.execute(
+            'DELETE FROM users WHERE id = ?',
+            [id],
+        ) as any;
+        return { affectedRows: (result as any).affectedRows };
     }
 
-    async setRefreshToken(id: number, refreshToken: string | null) {
-        await this.pool.execute('UPDATE users SET refresh_token = ? WHERE id = ?', [refreshToken, id]);
-    }
-
-    async findByRefreshToken(refreshToken: string) {
-        const [rows] = await this.pool.execute<RowDataPacket[]>(
-            'SELECT id, username, role FROM users WHERE refresh_token = ?',
-            [refreshToken]
+    async setRefreshToken(userId: number, token: string | null) {
+        const pool = this.db.getPool();
+        await pool.execute(
+            'UPDATE users SET refresh_token = ? WHERE id = ?',
+            [token, userId],
         );
-        return rows[0];
+    }
+
+    async findByRefreshToken(token: string) {
+        const pool = this.db.getPool();
+        const [rows] = await pool.execute(
+            'SELECT id, username, role FROM users WHERE refresh_token = ?',
+            [token],
+        ) as any;
+        return (rows as any[])[0] || null;
     }
 }
+

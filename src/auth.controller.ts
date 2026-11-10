@@ -1,37 +1,36 @@
-import { Controller, Post, Body, UnauthorizedException } from '@nestjs/common';
-import { AuthService } from './auth.service';
-import { UsersService } from './users/users.service'; // 👈 FIXED: Since auth.controller is in src/, users is a direct subfolder!
+import { Injectable } from '@nestjs/common';
+import { UsersService } from './users/users.service';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcryptjs';
 
-@Controller('auth')
-export class AuthController {
+@Injectable()
+export class AuthService {
   constructor(
-    private readonly authService: AuthService, 
-    private readonly usersService: UsersService
-  ) { }
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
+  ) {}
 
-  @Post('register')
-  async register(@Body() body: { username: string; password: string }) {
-    return this.usersService.createUser(body.username, body.password);
-  }
-
-  @Post('login')
-  async login(@Body() body: { username: string; password: string }) {
-    const user = await this.authService.validateUser(body.username, body.password);
+  async validateUser(username: string, pass: string): Promise<any> {
+    const user = await this.usersService.findByUsername(username);
     
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials'); 
+      return null;
     }
-    
-    return this.authService.login(user);
+
+    const isMatch = await bcrypt.compare(pass, user.password);
+
+    if (isMatch) {
+      const { password, ...result } = user;
+      return result;
+    }
+
+    return null;
   }
 
-  @Post('logout')
-  async logout(@Body() body: { userId: number }) {
-    return this.authService.logout(body.userId);
-  }
-
-  @Post('refresh')
-  async refresh(@Body() body: { refreshToken: string }) {
-    return this.authService.refreshTokens(body.refreshToken);
+  async login(user: any) {
+    const payload = { username: user.username, sub: user.id };
+    return {
+      access_token: this.jwtService.sign(payload),
+    };
   }
 }
